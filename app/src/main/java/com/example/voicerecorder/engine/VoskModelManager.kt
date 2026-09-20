@@ -8,7 +8,7 @@ import java.util.zip.ZipInputStream
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.vosk.Model
 
-/** Download/install state of the offline model, shown in Settings. */
+/** Download/install state of an offline model, shown in Settings. */
 sealed interface ModelState {
     data object NotInstalled : ModelState
     data class Downloading(val percent: Int) : ModelState
@@ -16,20 +16,34 @@ sealed interface ModelState {
     data class Error(val message: String) : ModelState
 }
 
+/** A downloadable Vosk model. [spaceless] = output words are joined without spaces (Chinese). */
+enum class VoskModelSpec(val modelName: String, val displayName: String, val spaceless: Boolean) {
+    ENGLISH("vosk-model-small-en-us-0.15", "English", false),
+    CHINESE("vosk-model-small-cn-0.22", "Chinese (Mandarin)", true);
+
+    val url get() = "https://alphacephei.com/vosk/models/$modelName.zip"
+
+    companion object {
+        /** Chinese for zh-* language tags, otherwise English. */
+        fun forLanguage(tag: String) = if (tag.startsWith("zh", ignoreCase = true)) CHINESE else ENGLISH
+    }
+}
+
 /**
- * Downloads (once) and loads the small English Vosk model (~40 MB zip).
+ * Downloads (once) and loads a small Vosk model (~40 MB zip each).
  *
- * The model is fetched on first use rather than bundled to keep the APK small; Settings also has
- * a button to fetch it ahead of time so the fallback works offline. Stored in app-private storage.
+ * Models are fetched on first use rather than bundled to keep the APK small; Settings also has a
+ * button to fetch them ahead of time so the fallback works offline. Stored in app-private storage.
  */
-class VoskModelManager private constructor(context: Context) {
+class VoskModelManager private constructor(context: Context, private val spec: VoskModelSpec) {
     private val appContext = context.applicationContext
-    private val modelDir = File(appContext.filesDir, "vosk/$MODEL_NAME")
+    private val modelDir = File(appContext.filesDir, "vosk/${spec.modelName}")
     private var model: Model? = null
 
     val state = MutableStateFlow<ModelState>(if (isInstalled()) ModelState.Ready else ModelState.NotInstalled)
 
-    fun isInstalled() = File(modelDir, "conf/model.conf").exists()
+    // Both small models contain am/final.mdl.
+    fun isInstalled() = File(modelDir, "am/final.mdl").exists()
 
     /** Blocking: downloads if needed, then loads. Call from a background thread. */
     @Synchronized
@@ -55,10 +69,10 @@ class VoskModelManager private constructor(context: Context) {
     private fun download(onProgress: (Int) -> Unit) {
         if (isInstalled()) return
         val root = File(appContext.filesDir, "vosk").apply { mkdirs() }
-        val tmp = File(root, "tmp").apply { deleteRecursively(); mkdirs() }
+        val tmp = File(root, "tmp-${spec.modelName}").apply { deleteRecursively(); mkdirs() }
         try {
             state.value = ModelState.Downloading(0)
-            val conn = URL(MODEL_URL).openConnection() as HttpURLConnection
+            val conn = URL(spec.url).openConnection() as HttpURLConnection
             conn.connectTimeout = 15_000
             conn.readTimeout = 30_000
             if (conn.responseCode != 200) throw java.io.IOException("HTTP ${conn.responseCode}")
@@ -77,8 +91,8 @@ class VoskModelManager private constructor(context: Context) {
                 }
             }
             unzip(counting, tmp)
-            val extracted = File(tmp, MODEL_NAME)
-            if (!File(extracted, "conf/model.conf").exists()) throw java.io.IOException("Downloaded archive looks wrong")
+            val extracted = File(tmp, spec.modelName)
+            if (!File(extracted, "am/final.mdl").exists()) throw java.io.IOException("Downloaded archive looks wrong")
             modelDir.deleteRecursively()
             if (!extracted.renameTo(modelDir)) throw java.io.IOException("Could not move model into place")
             state.value = ModelState.Ready
@@ -108,11 +122,14 @@ class VoskModelManager private constructor(context: Context) {
     }
 
     companion object {
-        const val MODEL_NAME = "vosk-model-small-en-us-0.15"
-        private const val MODEL_URL = "https://alphacephei.com/vosk/models/$MODEL_NAME.zip"
+        private val instances = HashMap<VoskModelSpec, VoskModelManager>()
 
-        @Volatile private var instance: VoskModelManager? = null
-        fun get(context: Context): VoskModelManager =
-            instance ?: synchronized(this) { instance ?: VoskModelManager(context).also { instance = it } }
+        @Synchronized
+        fun get(context: Context, spec: VoskModelSpec): VoskModelManager =
+            instances.getOrPut(spec) { VoskModelManager(context, spec) }
+
+        /** Frees every loaded model (~100 MB each). */
+        @Synchronized
+        fun releaseAll() = instances.values.forEach { it.release() }
     }
 }

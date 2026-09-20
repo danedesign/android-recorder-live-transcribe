@@ -31,6 +31,8 @@ import com.example.voicerecorder.PauseTest
 import com.example.voicerecorder.UiState
 import com.example.voicerecorder.engine.ModelState
 import com.example.voicerecorder.engine.VoskModelManager
+import com.example.voicerecorder.engine.VoskModelSpec
+import androidx.compose.material3.FilterChip
 import java.util.Locale
 
 @Composable
@@ -39,8 +41,6 @@ fun SettingsScreen(padding: PaddingValues, ui: UiState, onPauseTest: () -> Unit)
     val settings = remember { AppSettings(ctx) }
     var language by remember { mutableStateOf(settings.language) }
     var forceVosk by remember { mutableStateOf(settings.forceVosk) }
-    val models = remember { VoskModelManager.get(ctx) }
-    val modelState by models.state.collectAsState()
 
     Column(
         Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp),
@@ -59,6 +59,13 @@ fun SettingsScreen(padding: PaddingValues, ui: UiState, onPauseTest: () -> Unit)
         }
 
         Section("Language") {
+            // Quick picks. This overrides the device language, so an English phone can record in Mandarin.
+            fun pick(tag: String) { language = tag; settings.language = tag }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(language.isBlank(), { pick("") }, label = { Text("Device") })
+                FilterChip(language.startsWith("en", true), { pick("en-US") }, label = { Text("English") })
+                FilterChip(language.startsWith("zh", true), { pick("zh-CN") }, label = { Text("中文 (Mandarin)") })
+            }
             OutlinedTextField(
                 value = language,
                 onValueChange = { language = it; settings.language = it },
@@ -72,16 +79,11 @@ fun SettingsScreen(padding: PaddingValues, ui: UiState, onPauseTest: () -> Unit)
 
         Section("Offline model (Vosk fallback)") {
             Text(
-                when (val s = modelState) {
-                    ModelState.NotInstalled -> "Not downloaded (~40 MB, English). It is fetched automatically if the fallback is ever needed."
-                    is ModelState.Downloading -> "Downloading... ${s.percent}%"
-                    ModelState.Ready -> "Installed: ${VoskModelManager.MODEL_NAME}"
-                    is ModelState.Error -> "Download failed: ${s.message}"
-                },
+                "Used only if Google's recognizer fails. Each model is ~40 MB and is fetched " +
+                    "automatically if needed; download now to have it available offline.",
+                style = MaterialTheme.typography.bodySmall,
             )
-            if (modelState is ModelState.NotInstalled || modelState is ModelState.Error) {
-                OutlinedButton(onClick = { models.downloadInBackground() }) { Text("Download now") }
-            }
+            VoskModelSpec.entries.forEach { ModelRow(it) }
         }
 
         Section("Pause test (60 s)") {
@@ -92,6 +94,27 @@ fun SettingsScreen(padding: PaddingValues, ui: UiState, onPauseTest: () -> Unit)
                 style = MaterialTheme.typography.bodySmall,
             )
             Button(onClick = onPauseTest, enabled = !ui.recording) { Text("Start pause test") }
+        }
+    }
+}
+
+/** One line per offline model: status plus a download button when it is missing. */
+@Composable
+private fun ModelRow(spec: VoskModelSpec) {
+    val manager = VoskModelManager.get(LocalContext.current, spec)
+    val state by manager.state.collectAsState()
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "${spec.displayName}: " + when (val s = state) {
+                ModelState.NotInstalled -> "not downloaded"
+                is ModelState.Downloading -> "downloading ${s.percent}%"
+                ModelState.Ready -> "installed"
+                is ModelState.Error -> "failed (${s.message})"
+            },
+            Modifier.weight(1f),
+        )
+        if (state is ModelState.NotInstalled || state is ModelState.Error) {
+            OutlinedButton(onClick = { manager.downloadInBackground() }) { Text("Download") }
         }
     }
 }

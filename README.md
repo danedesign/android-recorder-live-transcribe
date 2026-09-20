@@ -52,7 +52,7 @@ AudioRecord (16 kHz mono PCM16, the ONLY mic user)      AudioCapture.kt
   one-shot results (segmented mode ignored) or its pipe breaks, a new session is started on a new pipe.
   Audio produced meanwhile waits in `AudioQueue`. Three quick failures in a row (a session lasting
   < 30 s) => on-device recognizer -> try the online one -> **Vosk**.
-- **Vosk fallback** (`engine/VoskEngine.kt`): `vosk-model-small-en-us-0.15` (~40 MB), downloaded on first
+- **Vosk fallback** (`engine/VoskEngine.kt`): `vosk-model-small-en-us-0.15` or `vosk-model-small-cn-0.22` (~40 MB each, chosen by language), downloaded on first
   use (or via Settings -> "Download now") into app-private storage. It gets the same PCM chunks.
 - **Settings tab:** active engine (Google on-device / Google online / Vosk), restart count, latest
   status, language (blank = device language), "Force Vosk" switch, model download.
@@ -80,10 +80,10 @@ To test the fallback on its own, turn on "Force Vosk" and run it again.
   the debug line shows what happened. The audio file is unaffected either way.
 - **Restart gaps:** up to ~2 s of audio already in the recognizer's pipe when a session dies is not
   re-recognized (it is still in the WAV).
-- **Vosk** is English-only here, has no punctuation/capitalisation, and is less accurate than Google.
+- **Vosk** has English and Mandarin models only, no punctuation, and is less accurate than Google.
   If the model isn't downloaded when it's needed, transcription starts once the download finishes (audio
   is queued meanwhile); if Stop is tapped first, the queued audio is not transcribed.
-- **Language:** the setting applies to Google's recognizer; Vosk stays English.
+- **Language:** pick Device / English / 中文 (Mandarin) in Settings, or type any tag (e.g. `fr-FR`) for Google. Vosk uses its Chinese model for `zh-*` and English otherwise. For on-device Google recognition the phone needs that language pack downloaded; otherwise it uses the online recognizer.
 - WAV is uncompressed: ~115 MB per hour. No M4A option yet.
 - If the process is killed mid-recording, the WAV stays valid up to the last ~5 s and the transcript up
   to the last ~15 s autosave, but recording does not resume.

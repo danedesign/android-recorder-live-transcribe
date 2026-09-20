@@ -31,7 +31,8 @@ class VoskEngine(
     private var thread: Thread? = null
     private var onStopped: (() -> Unit)? = null
 
-    override val label: String = "Vosk (offline)"
+    private val spec = VoskModelSpec.forLanguage(language)
+    override val label: String = "Vosk (offline, ${spec.displayName})"
 
     @Synchronized
     override fun start() {
@@ -49,13 +50,16 @@ class VoskEngine(
         if (thread == null || done) main.post(onStopped)
     }
 
+    /** Vosk's Chinese model separates words with spaces; written Chinese has none. */
+    private fun clean(text: String) = if (spec.spaceless) text.replace(" ", "") else text
+
     private fun run() {
         var recognizer: Recognizer? = null
         try {
-            if (!language.startsWith("en", ignoreCase = true)) {
-                listener.onStatus("Vosk fallback only has an English model (language is $language)")
+            if (spec == VoskModelSpec.ENGLISH && !language.startsWith("en", ignoreCase = true)) {
+                listener.onStatus("Vosk fallback only has English and Chinese models (language is $language); using English")
             }
-            val mgr = VoskModelManager.get(context)
+            val mgr = VoskModelManager.get(context, spec)
             if (!mgr.isInstalled()) listener.onStatus("Downloading offline model (~40 MB)...")
             val model = mgr.loadModel { pct -> listener.onStatus("Downloading offline model... $pct%") }
             recognizer = Recognizer(model, 16_000f)
@@ -69,13 +73,13 @@ class VoskEngine(
                 }
                 if (stopping && !drain) { queue.pushBack(chunk); break }
                 if (recognizer.acceptWaveForm(chunk, chunk.size)) {
-                    listener.onFinal(JSONObject(recognizer.result).optString("text"))
+                    listener.onFinal(clean(JSONObject(recognizer.result).optString("text")))
                 } else {
-                    val p = JSONObject(recognizer.partialResult).optString("partial")
+                    val p = clean(JSONObject(recognizer.partialResult).optString("partial"))
                     if (p.isNotBlank()) listener.onPartial(p)
                 }
             }
-            if (drain) listener.onFinal(JSONObject(recognizer.finalResult).optString("text"))
+            if (drain) listener.onFinal(clean(JSONObject(recognizer.finalResult).optString("text")))
         } catch (t: Throwable) {
             listener.onFailure("Vosk error: ${t.message ?: t.javaClass.simpleName}")
         } finally {

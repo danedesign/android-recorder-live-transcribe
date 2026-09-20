@@ -243,7 +243,7 @@ class RecorderService : Service() {
         capture?.stop()
         runCatching { writer?.close() }
         wakeLock?.let { if (it.isHeld) it.release() }
-        VoskModelManager.get(this).release() // free the ~100 MB model between recordings
+        VoskModelManager.releaseAll() // free the ~100 MB models between recordings
         if (RecorderState.ui.value.recording) {
             RecorderState.update { it.copy(recording = false, status = "Recording service was stopped", currentBase = null) }
         }
